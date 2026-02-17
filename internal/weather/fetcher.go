@@ -6,38 +6,43 @@ import (
 
 	"cron-weather/internal/scheduler"
 	"cron-weather/internal/sender"
+	"cron-weather/internal/subscription"
 )
 
 type Fetcher interface {
 	FetchAlerts(ctx context.Context, lat, lon float64) ([]string, error)
 }
 
-func NewFetchJob(fetcher Fetcher, sender sender.Sender, lat, lon float64) scheduler.JobFunc {
-	return func(ctx context.Context, logger *slog.Logger) {
-		logger.Info("weather job started")
+func NewFetchJobForSubscription(
+	fetcher Fetcher,
+	sub subscription.Subscription,
+	senderFactory func(chatID int64) (sender.Sender, error),
+	logger *slog.Logger,
+) (scheduler.JobFunc, error) {
+	sdr, err := senderFactory(sub.ChatID)
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context, taskLogger *slog.Logger) {
+		taskLogger.Info("weather job started", "chat_id", sub.ChatID)
 
-		messages, err := fetcher.FetchAlerts(ctx, lat, lon)
+		messages, err := fetcher.FetchAlerts(ctx, sub.Lat, sub.Lon) // используем координаты из подписки
 		if err != nil {
 			if ctx.Err() != nil {
-				logger.Warn("weather job cancelled due to shutdown", "reason", ctx.Err())
+				taskLogger.Warn("job cancelled due to shutdown", "reason", ctx.Err())
 				return
 			}
-			logger.Error("failed to fetch alerts", "error", err)
+			taskLogger.Error("failed to fetch alerts", "error", err)
 			return
 		}
-
 		if len(messages) == 0 {
-			logger.Info("no alerts at this moment")
+			taskLogger.Info("no alerts")
 			return
 		}
-
-		logger.Info("received alerts", "count", len(messages))
-
-		if err := sender.Send(ctx, messages); err != nil {
-			logger.Error("failed to send alerts", "error", err)
+		if err := sdr.Send(ctx, messages); err != nil {
+			taskLogger.Error("failed to send alerts", "error", err)
 			return
 		}
-
-		logger.Info("alerts sent successfully")
-	}
+		taskLogger.Info("alerts sent successfully", "count", len(messages))
+	}, nil
 }

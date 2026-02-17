@@ -2,6 +2,9 @@ package weather
 
 import (
 	"context"
+	"cron-weather/internal/sender"
+	"cron-weather/internal/subscription"
+	"errors"
 	"log/slog"
 	"testing"
 )
@@ -28,17 +31,36 @@ func (m *mockSender) Send(ctx context.Context, messages []string) error {
 	return m.err
 }
 
-func TestNewFetchJob(t *testing.T) {
+func TestNewFetchJobForSubscription(t *testing.T) {
 	logger := slog.New(slog.DiscardHandler)
+	ctx := context.Background()
+
+	baseSub := subscription.Subscription{
+		ChatID:   123,
+		Interval: 0,
+		StartAt:  "",
+		Lat:      55.75,
+		Lon:      37.62,
+	}
 
 	t.Run("success with alerts", func(t *testing.T) {
 		fetcher := &mockFetcher{
 			alerts: []string{"alert1", "alert2"},
 		}
 		sdr := &mockSender{}
-		job := NewFetchJob(fetcher, sdr, 0, 0)
+		factory := func(chatID int64) (sender.Sender, error) {
+			if chatID != baseSub.ChatID {
+				t.Errorf("unexpected chatID: %d", chatID)
+			}
+			return sdr, nil
+		}
 
-		job(context.Background(), logger)
+		jobFunc, err := NewFetchJobForSubscription(fetcher, baseSub, factory, logger)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		jobFunc(ctx, logger)
 
 		if len(sdr.sentMessages) != 1 {
 			t.Fatalf("expected 1 send, got %d", len(sdr.sentMessages))
@@ -51,9 +73,16 @@ func TestNewFetchJob(t *testing.T) {
 	t.Run("no alerts", func(t *testing.T) {
 		fetcher := &mockFetcher{alerts: []string{}}
 		sdr := &mockSender{}
-		job := NewFetchJob(fetcher, sdr, 0, 0)
+		factory := func(chatID int64) (sender.Sender, error) {
+			return sdr, nil
+		}
 
-		job(context.Background(), logger)
+		jobFunc, err := NewFetchJobForSubscription(fetcher, baseSub, factory, logger)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		jobFunc(ctx, logger)
 
 		if len(sdr.sentMessages) != 0 {
 			t.Error("expected no send when no alerts")
@@ -61,11 +90,18 @@ func TestNewFetchJob(t *testing.T) {
 	})
 
 	t.Run("fetcher error", func(t *testing.T) {
-		fetcher := &mockFetcher{err: context.DeadlineExceeded}
+		fetcher := &mockFetcher{err: errors.New("some error")}
 		sdr := &mockSender{}
-		job := NewFetchJob(fetcher, sdr, 0, 0)
+		factory := func(chatID int64) (sender.Sender, error) {
+			return sdr, nil
+		}
 
-		job(context.Background(), logger)
+		jobFunc, err := NewFetchJobForSubscription(fetcher, baseSub, factory, logger)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		jobFunc(ctx, logger)
 
 		if len(sdr.sentMessages) != 0 {
 			t.Error("expected no send on fetcher error")
@@ -73,16 +109,35 @@ func TestNewFetchJob(t *testing.T) {
 	})
 
 	t.Run("context cancelled", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
 		fetcher := &mockFetcher{alerts: []string{"alert"}}
 		sdr := &mockSender{}
-		job := NewFetchJob(fetcher, sdr, 0, 0)
+		factory := func(chatID int64) (sender.Sender, error) {
+			return sdr, nil
+		}
 
-		job(ctx, logger)
+		jobFunc, err := NewFetchJobForSubscription(fetcher, baseSub, factory, logger)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		cancelledCtx, cancel := context.WithCancel(ctx)
+		cancel()
+		jobFunc(cancelledCtx, logger)
 
 		if len(sdr.sentMessages) != 0 {
 			t.Error("expected no send when context cancelled")
+		}
+	})
+
+	t.Run("sender factory error", func(t *testing.T) {
+		fetcher := &mockFetcher{alerts: []string{"alert"}}
+		factory := func(chatID int64) (sender.Sender, error) {
+			return nil, errors.New("factory error")
+		}
+
+		_, err := NewFetchJobForSubscription(fetcher, baseSub, factory, logger)
+		if err == nil {
+			t.Error("expected error from factory, got nil")
 		}
 	})
 }

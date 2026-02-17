@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -10,6 +11,8 @@ import (
 	"cron-weather/internal/config"
 	"cron-weather/internal/scheduler"
 	"cron-weather/internal/sender"
+	"cron-weather/internal/storage"
+	"cron-weather/internal/subscription"
 	"cron-weather/internal/weather"
 	"cron-weather/pkg/logger"
 
@@ -24,49 +27,90 @@ func main() {
 
 	log.Info("start weather cron-job", slog.String("version", "0.1.0"))
 
+	repo, err := storage.NewSQLiteRepository(cfg.DBPath)
+	if err != nil {
+		log.Error("failed to connect to SQLite", "error", err)
+		os.Exit(1)
+	}
+	defer repo.Close()
+
+	ctx := context.Background()
+	dbSubs, err := repo.GetAll(ctx)
+	if err != nil {
+		log.Error("failed to load subscriptions from DB", "error", err)
+		os.Exit(1)
+	}
+	cache := storage.NewCache()
+	cache.LoadAll(dbSubs)
+	log.Info("loaded subscriptions from DB", "count", len(dbSubs))
+
+	if len(dbSubs) == 0 && cfg.DefaultSub.ChatID != 0 {
+		log.Info("no subscriptions found, creating default subscription from env",
+			"chat_id", cfg.DefaultSub.ChatID)
+
+		lat := cfg.DefaultSub.Lat
+		lon := cfg.DefaultSub.Lon
+		if lat == 0 && lon == 0 {
+			lat = cfg.WeatherAPI.Lat
+			lon = cfg.WeatherAPI.Lon
+		}
+		interval := cfg.DefaultSub.Interval
+		if interval == 0 {
+			interval = cfg.Interval
+		}
+		defaultSub := subscription.Subscription{
+			ChatID:   cfg.DefaultSub.ChatID,
+			Interval: interval,
+			StartAt:  cfg.DefaultSub.StartAt,
+			Lat:      lat,
+			Lon:      lon,
+		}
+		if err := repo.Add(ctx, defaultSub); err != nil {
+			log.Error("failed to add default subscription", "error", err)
+		} else {
+			cache.Add(defaultSub)
+			log.Info("default subscription added", "chat_id", defaultSub.ChatID)
+		}
+	}
+
 	fetcher := weather.NewOpenWeatherFetcher(cfg.WeatherAPI.APIKey, cfg.WeatherAPI.HTTPTimeout)
 
-	log.Info("fetcher created")
-
-	tgSender, err := sender.NewTelegramSender(config.Telegram{
-		Token:  cfg.SenderAPI.Token,
-		ChatID: cfg.SenderAPI.ChatID,
-	})
-	if err != nil {
-		log.Error("failed to create telegram sender", "error", err)
-		os.Exit(1)
+	senderFactory := func(chatID int64) (sender.Sender, error) {
+		return sender.NewTelegramSender(config.Telegram{
+			Token:  cfg.SenderAPI.Token,
+			ChatID: chatID,
+		})
 	}
 
-	log.Info("sender created")
-
-	job := weather.NewFetchJob(fetcher, tgSender, cfg.WeatherAPI.Lat, cfg.WeatherAPI.Lon)
-
-	service, err := scheduler.NewCronService(cfg.Interval, cfg.StartAt, job, log)
-	if err != nil {
-		log.Error("failed to create cron service", "error", err)
-		os.Exit(1)
-	}
-
-	if first := service.FirstRun(); first != nil {
-		log.Info("first run scheduled", "at", first.Format(time.RFC3339))
-	}
-
-	go func() {
-		if err := service.Start(); err != nil {
-			log.Error("failed to start cron service", "error", err)
-			os.Exit(1)
+	var services []*scheduler.CronService
+	for _, sub := range cache.GetAll() {
+		job, err := weather.NewFetchJobForSubscription(fetcher, sub, senderFactory, log)
+		if err != nil {
+			log.Error("failed to create job for subscription", "chat_id", sub.ChatID, "error", err)
+			continue
 		}
-	}()
+		svc, err := scheduler.NewCronService(sub.Interval, sub.StartAt, job, log)
+		if err != nil {
+			log.Error("failed to create cron service for subscription", "chat_id", sub.ChatID, "error", err)
+			continue
+		}
+		services = append(services, svc)
+		go func(s *scheduler.CronService) {
+			if err := s.Start(); err != nil && err.Error() != "cron service already running" {
+				log.Error("cron service stopped with error", "error", err)
+			}
+		}(svc)
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+	log.Info("shutting down...")
 
-	sig := <-sigCh
-	log.Info("received signal", "signal", sig)
-
-	if err := service.Shutdown(30 * time.Second); err != nil {
-		log.Error("shutdown error", "error", err)
+	for _, svc := range services {
+		if err := svc.Shutdown(10 * time.Second); err != nil {
+			log.Error("shutdown error", "error", err)
+		}
 	}
-
-	log.Info("cron service stop")
+	log.Info("all services stopped")
 }
