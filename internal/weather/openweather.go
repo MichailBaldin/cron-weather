@@ -24,6 +24,8 @@ type oneCallResponse struct {
 type OpenWeatherFetcher struct {
 	apiKey     string
 	httpClient *http.Client
+
+	limiter *DailyLimiter
 }
 
 func NewOpenWeatherFetcher(apiKey string, timeout time.Duration) *OpenWeatherFetcher {
@@ -35,7 +37,18 @@ func NewOpenWeatherFetcher(apiKey string, timeout time.Duration) *OpenWeatherFet
 	}
 }
 
+func (f *OpenWeatherFetcher) SetDailyLimiter(l *DailyLimiter) *OpenWeatherFetcher {
+	f.limiter = l
+	return f
+}
+
 func (f *OpenWeatherFetcher) FetchAlerts(ctx context.Context, lat, lon float64) ([]string, error) {
+	if f.limiter != nil {
+		if _, ok := f.limiter.Allow(time.Now()); !ok {
+			return nil, ErrDailyWeatherLimitExceeded
+		}
+	}
+
 	url := fmt.Sprintf(
 		"https://api.openweathermap.org/data/3.0/onecall?lat=%f&lon=%f&lang=ru&units=metric&appid=%s",
 		lat, lon, f.apiKey,
@@ -56,6 +69,10 @@ func (f *OpenWeatherFetcher) FetchAlerts(ctx context.Context, lat, lon float64) 
 		}
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return nil, ErrDailyWeatherLimitExceeded
+	}
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned non-200 status: %d", resp.StatusCode)
@@ -80,4 +97,3 @@ func (f *OpenWeatherFetcher) FetchAlerts(ctx context.Context, lat, lon float64) 
 	}
 	return messages, nil
 }
-
