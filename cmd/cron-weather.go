@@ -1,9 +1,6 @@
 package main
 
 import (
-	"context"
-	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -12,34 +9,12 @@ import (
 
 	"cron-weather/internal/config"
 	"cron-weather/internal/scheduler"
+	"cron-weather/internal/sender"
 	"cron-weather/internal/weather"
 	"cron-weather/pkg/logger"
 
 	"github.com/joho/godotenv"
 )
-
-func exampleJob(ctx context.Context, logger *slog.Logger) {
-	logger.Info("job started")
-
-	if err := doWork(ctx); err != nil {
-		wrappedErr := fmt.Errorf("proccessing data: %w", err)
-
-		logger.Error("job failed", "error", wrappedErr)
-
-		return
-	}
-}
-
-var ErrInvalidState = errors.New("invalid state")
-
-func doWork(ctx context.Context) error {
-	select {
-	case <-time.After(2 * time.Second):
-		return fmt.Errorf("validation failed: %w", ErrInvalidState)
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
 
 func main() {
 	_ = godotenv.Load()
@@ -51,7 +26,20 @@ func main() {
 
 	fetcher := weather.NewOpenWeatherFetcher(cfg.WeatherAPI.APIKey, cfg.WeatherAPI.HTTPTimeout)
 
-	job := weather.NewFetchJob(fetcher, cfg.WeatherAPI.Lat, cfg.WeatherAPI.Lon)
+	log.Info("fetcher created")
+
+	tgSender, err := sender.NewTelegramSender(config.Telegram{
+		Token:  cfg.SenderAPI.Token,
+		ChatID: cfg.SenderAPI.ChatID,
+	})
+	if err != nil {
+		log.Error("failed to create telegram sender", "error", err)
+		os.Exit(1)
+	}
+
+	log.Info("sender created")
+
+	job := weather.NewFetchJob(fetcher, tgSender, cfg.WeatherAPI.Lat, cfg.WeatherAPI.Lon)
 
 	service, err := scheduler.NewCronService(cfg.Interval, cfg.StartAt, job, log)
 	if err != nil {
