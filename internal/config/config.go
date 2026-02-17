@@ -8,11 +8,13 @@ import (
 )
 
 type Config struct {
-	Env        string        `env:"ENV"`
-	Interval   time.Duration `env:"INTERVAL" default:"30s"`
-	StartAt    string        `env:"START_AT"`
-	WeatherAPI Client        `env-prefix:"WEATHER_"`
-	SenderAPI  Telegram      `env-prefix:"TG_"`
+	Env        string              `env:"ENV"`
+	Interval   time.Duration       `env:"INTERVAL" default:"30s"`
+	StartAt    string              `env:"START_AT"`
+	WeatherAPI Client              `env-prefix:"WEATHER_"`
+	SenderAPI  Telegram            `env-prefix:"TG_"`
+	DBPath     string              `env:"DB_PATH" default:"weather.db"`
+	DefaultSub DefaultSubscription `env-prefix:"DEFAULT_SUB_"`
 }
 
 type Client struct {
@@ -25,6 +27,14 @@ type Client struct {
 type Telegram struct {
 	Token  string `env:"TOKEN"`
 	ChatID int64  `env:"CHAT_ID"`
+}
+
+type DefaultSubscription struct {
+	ChatID   int64         `env:"CHAT_ID"`
+	Interval time.Duration `env:"INTERVAL"`
+	StartAt  string        `env:"START_AT"`
+	Lat      float64       `env:"LAT"`
+	Lon      float64       `env:"LON"`
 }
 
 func MustLoad() *Config {
