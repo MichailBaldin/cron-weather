@@ -2,17 +2,17 @@ package weather
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 
 	"cron-weather/internal/scheduler"
+	"cron-weather/internal/sender"
 )
 
 type Fetcher interface {
 	FetchAlerts(ctx context.Context, lat, lon float64) ([]string, error)
 }
 
-func NewFetchJob(fetcher Fetcher, lat, lon float64) scheduler.JobFunc {
+func NewFetchJob(fetcher Fetcher, sender sender.Sender, lat, lon float64) scheduler.JobFunc {
 	return func(ctx context.Context, logger *slog.Logger) {
 		logger.Info("weather job started")
 
@@ -32,8 +32,12 @@ func NewFetchJob(fetcher Fetcher, lat, lon float64) scheduler.JobFunc {
 		}
 
 		logger.Info("received alerts", "count", len(messages))
-		for i, msg := range messages {
-			logger.Info(fmt.Sprintf("alert #%d", i+1), "message", msg)
+
+		if err := sender.Send(ctx, messages); err != nil {
+			logger.Error("failed to send alerts", "error", err)
+			return
 		}
+
+		logger.Info("alerts sent successfully")
 	}
 }
