@@ -86,7 +86,10 @@ func main() {
 		}
 	}
 
-	fetcher := weather.NewOpenWeatherFetcher(cfg.WeatherAPI.APIKey, cfg.WeatherAPI.HTTPTimeout)
+	dailyLimiter := weather.NewDailyLimiter(1000, time.UTC)
+
+	fetcher := weather.NewOpenWeatherFetcher(cfg.WeatherAPI.APIKey, cfg.WeatherAPI.HTTPTimeout).
+		SetDailyLimiter(dailyLimiter)
 
 	senderFactory := func(chatID int64) (sender.Sender, error) {
 		return sender.NewTelegramSender(config.Telegram{

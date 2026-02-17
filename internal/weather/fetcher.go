@@ -2,6 +2,7 @@ package weather
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
@@ -22,7 +23,6 @@ func NewFetchJobForSubscription(
 ) (scheduler.JobFunc, error) {
 	return NewFetchJobForSubscriptionWithMetrics(fetcher, sub, senderFactory, logger, time.Time{})
 }
-
 
 func NewFetchJobForSubscriptionWithMetrics(
 	fetcher Fetcher,
@@ -49,6 +49,12 @@ func NewFetchJobForSubscriptionWithMetrics(
 				taskLogger.Warn("job cancelled due to shutdown", "reason", ctx.Err(), "fetch_dur", fetchDur)
 				return
 			}
+
+			if errors.Is(err, ErrDailyWeatherLimitExceeded) {
+				taskLogger.Warn("openweather daily limit exceeded, skipping run", "fetch_dur", fetchDur)
+				return
+			}
+
 			taskLogger.Error("failed to fetch alerts", "error", err, "fetch_dur", fetchDur)
 			return
 		}
