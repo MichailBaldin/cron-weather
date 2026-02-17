@@ -1,0 +1,23 @@
+services:
+  cron-weather:
+    build: .
+    container_name: weather-cron
+    restart: unless-stopped
+    environment:
+      - ENV=${ENV:-prod}
+      - INTERVAL=${INTERVAL:-30s}
+      - START_AT=${START_AT}
+      - WEATHER_API_KEY=${WEATHER_API_KEY}
+      - WEATHER_LAT=${WEATHER_LAT:-55.60732906526543}
+      - WEATHER_LON=${WEATHER_LON:-38.168394018791}
+      - WEATHER_HTTP_TIMEOUT=${WEATHER_HTTP_TIMEOUT:-10s}
+      - TG_TOKEN=${TG_TOKEN}
+      - TG_CHAT_ID=${TG_CHAT_ID}
+      - DB_PATH=/data/subscriptions.db
+      - DEFAULT_SUB_CHAT_ID=${DEFAULT_SUB_CHAT_ID}
+      - DEFAULT_SUB_INTERVAL=${DEFAULT_SUB_INTERVAL}
+      - DEFAULT_SUB_START_AT=${DEFAULT_SUB_START_AT}
+      - DEFAULT_SUB_LAT=${DEFAULT_SUB_LAT}
+      - DEFAULT_SUB_LON=${DEFAULT_SUB_LON}
+    volumes:
+      - ./data:/data
