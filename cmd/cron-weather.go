@@ -12,6 +12,7 @@ import (
 
 	"cron-weather/internal/config"
 	"cron-weather/internal/scheduler"
+	"cron-weather/internal/weather"
 	"cron-weather/pkg/logger"
 
 	"github.com/joho/godotenv"
@@ -48,7 +49,11 @@ func main() {
 
 	log.Info("start weather cron-job", slog.String("version", "0.1.0"))
 
-	service, err := scheduler.NewCronService(cfg.Interval, cfg.StartAt, exampleJob, log)
+	fetcher := weather.NewOpenWeatherFetcher(cfg.WeatherAPI.APIKey, cfg.WeatherAPI.HTTPTimeout)
+
+	job := weather.NewFetchJob(fetcher, cfg.WeatherAPI.Lat, cfg.WeatherAPI.Lon)
+
+	service, err := scheduler.NewCronService(cfg.Interval, cfg.StartAt, job, log)
 	if err != nil {
 		log.Error("failed to create cron service", "error", err)
 		os.Exit(1)

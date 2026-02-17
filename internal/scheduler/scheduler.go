@@ -10,10 +10,12 @@ import (
 	"github.com/google/uuid"
 )
 
+type JobFunc func(ctx context.Context, logger *slog.Logger)
+
 type CronService struct {
 	interval time.Duration
 	firstRun *time.Time
-	job      func(ctx context.Context, logger *slog.Logger)
+	job      JobFunc
 	logger   *slog.Logger
 
 	cancel  context.CancelFunc
@@ -25,7 +27,7 @@ type CronService struct {
 func NewCronService(
 	interval time.Duration,
 	startAt string,
-	job func(ctx context.Context, logger *slog.Logger),
+	job JobFunc,
 	logger *slog.Logger,
 ) (*CronService, error) {
 	var firstRun *time.Time
