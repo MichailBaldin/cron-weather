@@ -41,32 +41,48 @@ func New(cfg *config.Config, log *slog.Logger, startedAt time.Time) (*App, error
 	cache := storage.NewCache()
 	cache.LoadAll(dbSubs)
 
-	// Seed default subscription only if DB is empty.
-	if len(dbSubs) == 0 && cfg.DefaultSub.ChatID != 0 {
-		lat := cfg.DefaultSub.Lat
-		lon := cfg.DefaultSub.Lon
-		if lat == 0 && lon == 0 {
-			lat = cfg.WeatherAPI.Lat
-			lon = cfg.WeatherAPI.Lon
+	if len(dbSubs) == 0 {
+		// Build a single seed subscription from config.
+		// Primary config has priority, DefaultSub is only a fallback.
+		seedChatID := cfg.SenderAPI.ChatID
+		if seedChatID == 0 {
+			seedChatID = cfg.DefaultSub.ChatID
 		}
 
-		interval := cfg.DefaultSub.Interval
-		if interval == 0 {
-			interval = cfg.Interval
-		}
+		if seedChatID != 0 {
+			interval := cfg.Interval
+			if interval == 0 {
+				interval = cfg.DefaultSub.Interval
+			}
 
-		defaultSub := subscription.Subscription{
-			ChatID:   cfg.DefaultSub.ChatID,
-			Interval: interval,
-			StartAt:  cfg.DefaultSub.StartAt,
-			Lat:      lat,
-			Lon:      lon,
-		}
+			startAt := cfg.StartAt
+			if startAt == "" {
+				startAt = cfg.DefaultSub.StartAt
+			}
 
-		if err := repo.Add(ctx, defaultSub); err == nil {
-			cache.Add(defaultSub)
+			lat, lon := cfg.WeatherAPI.Lat, cfg.WeatherAPI.Lon
+			if lat == 0 && lon == 0 {
+				lat, lon = cfg.DefaultSub.Lat, cfg.DefaultSub.Lon
+			}
+
+			seedSub := subscription.Subscription{
+				ChatID:   seedChatID,
+				Interval: interval,
+				StartAt:  startAt,
+				Lat:      lat,
+				Lon:      lon,
+			}
+
+			log.Info("no subscriptions found, seeding subscription from config", "chat_id", seedSub.ChatID)
+
+			if err := repo.Add(ctx, seedSub); err != nil {
+				log.Error("failed to add seed subscription", "error", err)
+			} else {
+				cache.Add(seedSub)
+				log.Info("seed subscription added", "chat_id", seedSub.ChatID)
+			}
 		} else {
-			log.Error("failed to add default subscription", "error", err)
+			log.Warn("no subscriptions found and no chat_id configured; service will idle")
 		}
 	}
 
