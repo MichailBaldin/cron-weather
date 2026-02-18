@@ -11,6 +11,7 @@ import (
 
 	"cron-weather/internal/scheduler"
 	"cron-weather/internal/sender"
+	"cron-weather/internal/storage"
 	"cron-weather/internal/subscription"
 )
 
@@ -26,13 +27,17 @@ func NewFetchJobForSubscription(
 	senderFactory func(chatID int64) (sender.Sender, error),
 	logger *slog.Logger,
 ) (scheduler.JobFunc, error) {
-	return NewFetchJobForSubscriptionWithMetrics(fetcher, sub, senderFactory, logger, time.Time{})
+	// No persistent dedup repository by default.
+	return NewFetchJobForSubscriptionWithMetrics(fetcher, sub, senderFactory, nil, logger, time.Time{})
 }
 
+// NewFetchJobForSubscriptionWithMetrics is the same job builder but allows passing a startedAt timestamp
+// for metrics logging and an optional repository for persistent deduplication.
 func NewFetchJobForSubscriptionWithMetrics(
 	fetcher Fetcher,
 	sub subscription.Subscription,
 	senderFactory func(chatID int64) (sender.Sender, error),
+	sentRepo storage.SentAlertsRepository,
 	logger *slog.Logger,
 	startedAt time.Time,
 ) (scheduler.JobFunc, error) {
@@ -40,9 +45,6 @@ func NewFetchJobForSubscriptionWithMetrics(
 	if err != nil {
 		return nil, err
 	}
-
-	// Dedup state is per-subscription job (lives in the closure).
-	seen := make(map[string]struct{})
 
 	return func(ctx context.Context, taskLogger *slog.Logger) {
 		jobStart := time.Now()
@@ -72,21 +74,30 @@ func NewFetchJobForSubscriptionWithMetrics(
 			return
 		}
 
-		// Filter already sent alerts for this subscription (in-memory dedup).
+		// Filter already sent alerts for this subscription (persistent dedup if repo is provided).
 		unique := make([]string, 0, len(messages))
-		newFPs := make([]string, 0, len(messages))
+		fps := make([]string, 0, len(messages))
 
 		for _, m := range messages {
 			fp := fingerprintMessage(m)
-			if _, ok := seen[fp]; ok {
-				continue
+
+			if sentRepo != nil {
+				ok, err := sentRepo.WasSent(ctx, sub.ChatID, fp)
+				if err != nil {
+					taskLogger.Error("failed to check dedup state", "error", err)
+					return
+				}
+				if ok {
+					continue
+				}
 			}
+
 			unique = append(unique, m)
-			newFPs = append(newFPs, fp)
+			fps = append(fps, fp)
 		}
 
 		if len(unique) == 0 {
-			taskLogger.Debug("all alerts already sent ранее (dedup)", "fetch_dur", fetchDur, "total_dur", time.Since(jobStart))
+			taskLogger.Debug("all alerts already sent (dedup)", "fetch_dur", fetchDur, "total_dur", time.Since(jobStart))
 			return
 		}
 
@@ -100,8 +111,14 @@ func NewFetchJobForSubscriptionWithMetrics(
 		}
 
 		// Mark alerts as sent only after successful delivery.
-		for _, fp := range newFPs {
-			seen[fp] = struct{}{}
+		if sentRepo != nil {
+			now := time.Now()
+			for _, fp := range fps {
+				if err := sentRepo.MarkSent(ctx, sub.ChatID, fp, now); err != nil {
+					taskLogger.Error("failed to mark alert as sent", "error", err)
+					// Do not return: delivery succeeded, marking can be retried next time if needed.
+				}
+			}
 		}
 
 		taskLogger.Info("alerts sent successfully", "count", len(unique))

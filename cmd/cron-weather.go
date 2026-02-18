@@ -100,7 +100,7 @@ func main() {
 
 	var services []*scheduler.CronService
 	for _, sub := range cache.GetAll() {
-		job, err := weather.NewFetchJobForSubscriptionWithMetrics(fetcher, sub, senderFactory, log, appStart)
+		job, err := weather.NewFetchJobForSubscriptionWithMetrics(fetcher, sub, senderFactory, repo, log, appStart)
 		if err != nil {
 			log.Error("failed to create job for subscription", "chat_id", sub.ChatID, "error", err)
 			continue
