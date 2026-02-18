@@ -6,6 +6,7 @@ import (
 	"cron-weather/internal/subscription"
 )
 
+// Cache is an in-memory cache of subscriptions keyed by chat_id.
 type Cache struct {
 	mu    sync.RWMutex
 	items map[int64]subscription.Subscription // key: chat_id

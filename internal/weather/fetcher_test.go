@@ -2,11 +2,12 @@ package weather
 
 import (
 	"context"
-	"cron-weather/internal/sender"
-	"cron-weather/internal/subscription"
 	"errors"
 	"log/slog"
 	"testing"
+
+	"cron-weather/internal/sender"
+	"cron-weather/internal/subscription"
 )
 
 type mockFetcher struct {
@@ -138,6 +139,30 @@ func TestNewFetchJobForSubscription(t *testing.T) {
 		_, err := NewFetchJobForSubscription(fetcher, baseSub, factory, logger)
 		if err == nil {
 			t.Error("expected error from factory, got nil")
+		}
+	})
+
+	t.Run("dedup same alerts on next run", func(t *testing.T) {
+		fetcher := &mockFetcher{
+			alerts: []string{"alert1", "alert2"},
+		}
+		sdr := &mockSender{}
+		factory := func(chatID int64) (sender.Sender, error) {
+			return sdr, nil
+		}
+
+		jobFunc, err := NewFetchJobForSubscription(fetcher, baseSub, factory, logger)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// First run sends alerts.
+		jobFunc(ctx, logger)
+		// Second run gets same alerts, but should not send again.
+		jobFunc(ctx, logger)
+
+		if len(sdr.sentMessages) != 1 {
+			t.Fatalf("expected 1 send due to dedup, got %d", len(sdr.sentMessages))
 		}
 	})
 }

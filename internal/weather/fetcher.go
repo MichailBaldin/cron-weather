@@ -1,7 +1,10 @@
+// Package weather contains logic for fetching weather alerts and running scheduled jobs.
 package weather
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"time"
@@ -11,10 +14,12 @@ import (
 	"cron-weather/internal/subscription"
 )
 
+// Fetcher provides weather alerts for given coordinates.
 type Fetcher interface {
 	FetchAlerts(ctx context.Context, lat, lon float64) ([]string, error)
 }
 
+// NewFetchJobForSubscription builds a scheduled job that fetches alerts and sends them to the user.
 func NewFetchJobForSubscription(
 	fetcher Fetcher,
 	sub subscription.Subscription,
@@ -35,6 +40,9 @@ func NewFetchJobForSubscriptionWithMetrics(
 	if err != nil {
 		return nil, err
 	}
+
+	// Dedup state is per-subscription job (lives in the closure).
+	seen := make(map[string]struct{})
 
 	return func(ctx context.Context, taskLogger *slog.Logger) {
 		jobStart := time.Now()
@@ -64,8 +72,26 @@ func NewFetchJobForSubscriptionWithMetrics(
 			return
 		}
 
+		// Filter already sent alerts for this subscription (in-memory dedup).
+		unique := make([]string, 0, len(messages))
+		newFPs := make([]string, 0, len(messages))
+
+		for _, m := range messages {
+			fp := fingerprintMessage(m)
+			if _, ok := seen[fp]; ok {
+				continue
+			}
+			unique = append(unique, m)
+			newFPs = append(newFPs, fp)
+		}
+
+		if len(unique) == 0 {
+			taskLogger.Debug("all alerts already sent ранее (dedup)", "fetch_dur", fetchDur, "total_dur", time.Since(jobStart))
+			return
+		}
+
 		sendStart := time.Now()
-		err = sdr.Send(ctx, messages)
+		err = sdr.Send(ctx, unique)
 		sendDur := time.Since(sendStart)
 
 		if err != nil {
@@ -73,10 +99,15 @@ func NewFetchJobForSubscriptionWithMetrics(
 			return
 		}
 
-		taskLogger.Info("alerts sent successfully", "count", len(messages))
+		// Mark alerts as sent only after successful delivery.
+		for _, fp := range newFPs {
+			seen[fp] = struct{}{}
+		}
+
+		taskLogger.Info("alerts sent successfully", "count", len(unique))
 
 		debugFields := []any{
-			"count", len(messages),
+			"count", len(unique),
 			"fetch_dur", fetchDur,
 			"send_dur", sendDur,
 			"total_dur", time.Since(jobStart),
@@ -86,4 +117,9 @@ func NewFetchJobForSubscriptionWithMetrics(
 		}
 		taskLogger.Debug("alerts sent successfully (metrics)", debugFields...)
 	}, nil
+}
+
+func fingerprintMessage(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }
