@@ -12,6 +12,7 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// Repository stores subscriptions.
 type Repository interface {
 	GetAll(ctx context.Context) ([]subscription.Subscription, error)
 	Add(ctx context.Context, sub subscription.Subscription) error
@@ -40,17 +41,28 @@ func NewSQLiteRepository(dbPath string) (*SQLiteRepository, error) {
 
 // createTable ensures required schema exists.
 func createTable(db *sql.DB) error {
-	query := `
+	subscriptions := `
 	CREATE TABLE IF NOT EXISTS subscriptions (
 		chat_id INTEGER PRIMARY KEY,
-		interval INTEGER NOT NULL, -- храним в наносекундах
+		interval INTEGER NOT NULL,
 		start_at TEXT NOT NULL DEFAULT '',
 		lat REAL NOT NULL,
 		lon REAL NOT NULL
 	);`
-	_, err := db.Exec(query)
-	if err != nil {
-		return fmt.Errorf("failed to create table: %w", err)
+
+	sentAlerts := `
+	CREATE TABLE IF NOT EXISTS sent_alerts (
+		chat_id INTEGER NOT NULL,
+		fingerprint TEXT NOT NULL,
+		sent_at INTEGER NOT NULL,
+		PRIMARY KEY (chat_id, fingerprint)
+	);`
+
+	if _, err := db.Exec(subscriptions); err != nil {
+		return fmt.Errorf("failed to create subscriptions table: %w", err)
+	}
+	if _, err := db.Exec(sentAlerts); err != nil {
+		return fmt.Errorf("failed to create sent_alerts table: %w", err)
 	}
 	return nil
 }
@@ -90,4 +102,33 @@ func (r *SQLiteRepository) Remove(ctx context.Context, chatID int64) error {
 
 func (r *SQLiteRepository) Close() error {
 	return r.db.Close()
+}
+
+type SentAlertsRepository interface {
+	WasSent(ctx context.Context, chatID int64, fingerprint string) (bool, error)
+	MarkSent(ctx context.Context, chatID int64, fingerprint string, sentAt time.Time) error
+}
+
+func (r *SQLiteRepository) WasSent(ctx context.Context, chatID int64, fingerprint string) (bool, error) {
+	var exists int
+	err := r.db.QueryRowContext(ctx,
+		"SELECT 1 FROM sent_alerts WHERE chat_id = ? AND fingerprint = ? LIMIT 1",
+		chatID, fingerprint,
+	).Scan(&exists)
+
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (r *SQLiteRepository) MarkSent(ctx context.Context, chatID int64, fingerprint string, sentAt time.Time) error {
+	_, err := r.db.ExecContext(ctx,
+		"INSERT OR IGNORE INTO sent_alerts (chat_id, fingerprint, sent_at) VALUES (?, ?, ?)",
+		chatID, fingerprint, sentAt.Unix(),
+	)
+	return err
 }
