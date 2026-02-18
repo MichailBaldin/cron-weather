@@ -26,6 +26,7 @@ func NewDailyLimiter(limit int, loc *time.Location) *DailyLimiter {
 	}
 }
 
+// Allow increments usage for the current day and reports whether the call is allowed.
 func (l *DailyLimiter) Allow(now time.Time) (remaining int, ok bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

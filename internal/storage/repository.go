@@ -1,3 +1,4 @@
+// Package storage contains subscription persistence and in-memory cache.
 package storage
 
 import (
@@ -18,6 +19,7 @@ type Repository interface {
 	Close() error
 }
 
+// SQLiteRepository stores subscriptions in SQLite.
 type SQLiteRepository struct {
 	db *sql.DB
 }
@@ -36,6 +38,7 @@ func NewSQLiteRepository(dbPath string) (*SQLiteRepository, error) {
 	return &SQLiteRepository{db: db}, nil
 }
 
+// createTable ensures required schema exists.
 func createTable(db *sql.DB) error {
 	query := `
 	CREATE TABLE IF NOT EXISTS subscriptions (
