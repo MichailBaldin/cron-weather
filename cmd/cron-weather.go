@@ -26,9 +26,18 @@ func main() {
 	cfg := config.MustLoad()
 	log := logger.SetupLogger(cfg.Env)
 
+	// Use configured timezone for START_AT parsing and daily limit calculations.
+	loc, err := time.LoadLocation(cfg.Timezone)
+	if err != nil {
+		log.Warn("invalid TIMEZONE, fallback to UTC", "timezone", cfg.Timezone, "error", err)
+		loc = time.UTC
+	}
+	time.Local = loc
+
 	log.Info("start weather cron-job",
 		slog.String("version", "0.1.0"),
 		slog.Duration("since_start", time.Since(appStart)),
+		slog.String("timezone", loc.String()),
 	)
 
 	repo, err := storage.NewSQLiteRepository(cfg.DBPath)
@@ -86,7 +95,7 @@ func main() {
 		}
 	}
 
-	dailyLimiter := weather.NewDailyLimiter(1000, time.UTC)
+	dailyLimiter := weather.NewDailyLimiter(cfg.DailyLimit, loc)
 
 	fetcher := weather.NewOpenWeatherFetcher(cfg.WeatherAPI.APIKey, cfg.WeatherAPI.HTTPTimeout).
 		SetDailyLimiter(dailyLimiter)

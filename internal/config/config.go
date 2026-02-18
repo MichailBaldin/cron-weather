@@ -11,6 +11,10 @@ type Config struct {
 	Env        string              `env:"ENV"`
 	Interval   time.Duration       `env:"INTERVAL" default:"30s"`
 	StartAt    string              `env:"START_AT"`
+
+	Timezone string `env:"TIMEZONE" default:"UTC"`
+	DailyLimit int `env:"DAILY_LIMIT" default:"1000"`
+	
 	WeatherAPI Client              `env-prefix:"WEATHER_"`
 	SenderAPI  Telegram            `env-prefix:"TG_"`
 	DBPath     string              `env:"DB_PATH" default:"weather.db"`
