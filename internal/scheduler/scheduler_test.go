@@ -41,3 +41,32 @@ func TestNewCronService(t *testing.T) {
 		}
 	})
 }
+
+func TestCronService_NonOverlap(t *testing.T) {
+	log := slog.Default()
+
+	executions := 0
+
+	job := func(ctx context.Context, logger *slog.Logger) {
+		executions++
+		time.Sleep(100 * time.Millisecond) // simulate long work
+	}
+
+	s, err := NewCronService(10*time.Millisecond, "", job, log)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	go s.Start()
+	time.Sleep(150 * time.Millisecond)
+
+	_ = s.Shutdown(1 * time.Second)
+
+	if executions < 1 {
+		t.Errorf("expected at least 1 execution")
+	}
+
+	if executions > 3 {
+		t.Errorf("job overlapped, executions=%d", executions)
+	}
+}

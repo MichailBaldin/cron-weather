@@ -1,3 +1,4 @@
+// Package scheduler provides a simple cron-like service
 package scheduler
 
 import (
@@ -10,8 +11,11 @@ import (
 	"github.com/google/uuid"
 )
 
+// JobFunc represents a scheduled job function.
 type JobFunc func(ctx context.Context, logger *slog.Logger)
 
+// CronService runs a job on a fixed interval.
+// It ensures graceful shutdown and prevents overlapping executions.
 type CronService struct {
 	interval time.Duration
 	firstRun *time.Time
@@ -22,6 +26,7 @@ type CronService struct {
 	wg      sync.WaitGroup
 	mu      sync.Mutex
 	running bool
+	jobRunning bool
 }
 
 func NewCronService(
@@ -53,6 +58,7 @@ func NewCronService(
 	}, nil
 }
 
+// Start launches the cron loop and blocks until shutdown.
 func (s *CronService) Start() error {
 	s.mu.Lock()
 	if s.running {
@@ -103,16 +109,35 @@ func (s *CronService) Start() error {
 }
 
 func (s *CronService) runJob(ctx context.Context) {
+	s.mu.Lock()
+	if s.jobRunning {
+		s.logger.Warn("job skipped: previous run still in progress")
+		s.mu.Unlock()
+		return
+	}
+	s.jobRunning = true
+	s.mu.Unlock()
+
 	s.wg.Add(1)
+
 	go func() {
 		defer s.wg.Done()
 		defer s.handlePanic()
+
 		taskID := uuid.NewString()
 		taskLogger := s.logger.With("task_id", taskID)
+
 		s.job(ctx, taskLogger)
+
+		// mark job as finished
+		s.mu.Lock()
+		s.jobRunning = false
+		s.mu.Unlock()
 	}()
 }
 
+// Shutdown gracefully stops the cron service
+// and waits for active jobs up to the given timeout.
 func (s *CronService) Shutdown(timeout time.Duration) error {
 	s.mu.Lock()
 	if !s.running {
@@ -142,6 +167,7 @@ func (s *CronService) FirstRun() *time.Time {
 	return s.firstRun
 }
 
+// handlePanic recovers from job panics to prevent service crash.
 func (s *CronService) handlePanic() {
 	if r := recover(); r != nil {
 		s.logger.Error("panic recovered in job", "panic", r)
