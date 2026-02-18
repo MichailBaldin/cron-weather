@@ -1,101 +1,134 @@
 # cron-weather
 
-A lightweight Go service that periodically fetches weather alerts from OpenWeather and sends them to Telegram chats.
+cron-weather is a lightweight Go service that periodically fetches weather alerts
+from the OpenWeather One Call API and delivers them to Telegram chats.
 
-The service supports multiple chat subscriptions stored in SQLite and prevents duplicate alert delivery across restarts.
+It supports multiple chat subscriptions stored in SQLite and prevents duplicate
+alert delivery across restarts.
 
 ---
 
-## Features
+## Project Purpose
 
-* Fetches alerts from **OpenWeather One Call API 3.0**
-* Sends alerts to **Telegram**
+The goal of this project is to provide a simple, reliable background service
+that monitors weather alerts and sends notifications to configured Telegram chats.
 
-  * HTML-safe formatting
-  * Automatic message splitting (Telegram limit safe)
-* Supports multiple chat subscriptions
-* Subscriptions are stored in **SQLite**
-* Alert deduplication persisted in SQLite
-* Cron-style scheduler per subscription
-* Graceful shutdown
-* Configurable timezone
-* Configurable daily API limit
+It is designed as:
+
+- A small standalone service
+- Docker-friendly
+- Persistent between restarts
+- Safe against duplicate alert delivery
+- Easy to configure via environment variables
+
+---
+
+## Tech Stack
+
+- **Go** 1.25+
+- **SQLite** (via mattn/go-sqlite3)
+- **Telegram Bot API**
+- **OpenWeather One Call API 3.0**
+- **Docker / Docker Compose**
+
+---
+
+## Project Status
+
+Current version: **v0.1.0**
+
+Status:  
+✔ Core functionality implemented  
+✔ Persistent subscriptions  
+✔ Persistent alert deduplication  
+✔ Graceful shutdown  
+✔ Basic test coverage  
+
+Not implemented yet:
+- Dynamic subscription management (via Telegram commands)
+- HTTP API
+- Metrics endpoint
+- Horizontal scaling
+
+This is currently a single-instance background service.
 
 ---
 
 ## Architecture Overview
 
-Each subscription:
+For each subscription:
 
-* Has its own interval and optional `start_at`
-* Runs as a scheduled job
-* Fetches alerts
-* Filters already-sent alerts
-* Sends only new alerts
+1. A cron service runs on a defined interval.
+2. Weather alerts are fetched.
+3. Already-sent alerts are filtered (SQLite-based dedup).
+4. Only new alerts are sent.
+5. Sent alerts are recorded to prevent duplicates.
 
-Data stored in SQLite:
+SQLite tables:
 
-* `subscriptions` — chat configuration
-* `sent_alerts` — delivered alert fingerprints (for dedup)
+### subscriptions
+
+| Field | Description |
+|--------|------------|
+| chat_id | Telegram chat ID |
+| interval | Run interval (nanoseconds) |
+| start_at | Optional start time (HH:MM) |
+| lat | Latitude |
+| lon | Longitude |
+
+### sent_alerts
+
+| Field | Description |
+|--------|------------|
+| chat_id | Telegram chat ID |
+| fingerprint | SHA256 of alert message |
+| sent_at | Unix timestamp |
 
 ---
 
-## Requirements
+## How to Install
 
-* Go 1.25+
-* Docker + Docker Compose (recommended)
-* OpenWeather API key
-* Telegram Bot Token
+### Option 1 — Docker (Recommended)
 
----
+1. Clone the repository:
 
-# Quick Start (Docker — Recommended)
+```bash
+git clone <repo_url>
+cd cron-weather
+````
 
-### Create `.env`
+2. Create `.env` file:
+
+- `ENV=local` → debug level, human-readable console logs.
+- `ENV=prod` → info level, structured JSON logs
+
 
 ```env
-# local - DEBUG ON
-# prod - ONLY INFO, WARN, ERROR
 ENV=prod
 
-# Scheduler
 INTERVAL=30s
 START_AT=
 TIMEZONE=UTC
 DAILY_LIMIT=1000
 
-# OpenWeather
 WEATHER_API_KEY=your_openweather_api_key
-WEATHER_LAT=55.60732906526543
-WEATHER_LON=38.168394018791
+WEATHER_LAT=your_latitude
+WEATHER_LON=your_longitude
 WEATHER_HTTP_TIMEOUT=10s
 
-# Telegram
 TG_TOKEN=your_telegram_bot_token
-TG_CHAT_ID=123456789
+TG_CHAT_ID=your_chat_id
 
-# SQLite
 DB_PATH=/data/subscriptions.db
-
-# Optional default subscription (only used if DB is empty)
-DEFAULT_SUB_CHAT_ID=
-DEFAULT_SUB_INTERVAL=
-DEFAULT_SUB_START_AT=
-DEFAULT_SUB_LAT=
-DEFAULT_SUB_LON=
 ```
 
----
-
-### Run
+3. Run:
 
 ```bash
 docker compose up --build -d
 ```
 
----
-
-### View logs
+4. View logs:
 
 ```bash
 docker compose logs -f
@@ -103,44 +136,19 @@ docker compose logs -f
 
 ---
 
-## Persistence
+### Option 2 — Local Run
 
-SQLite database is stored in:
+Requirements:
 
-```
-./data/subscriptions.db
-```
+* Go 1.25+
 
-Docker volume:
-
-```yaml
-volumes:
-  - ./data:/data
-```
-
-Your subscriptions and dedup state survive container restarts.
-
----
-
-# Run Locally (Without Docker)
-
-### Install dependencies
-
-```bash
-go mod download
-```
-
-### Create `.env`
-
-Same as above.
-
-### Run
+Run:
 
 ```bash
 make run
 ```
 
-### Tests
+Run tests:
 
 ```bash
 make test
@@ -148,139 +156,85 @@ make test
 
 ---
 
-# Configuration Details
+## Configuration
 
-## Scheduler
+All configuration is environment-based.
 
-* `INTERVAL` — default interval (e.g. `30s`, `5m`)
-* `START_AT` — first execution time in `HH:MM`
-* `TIMEZONE` — used for:
+### Core
 
-  * interpreting `START_AT`
-  * daily limiter reset
-
-Example:
-
-```
-TIMEZONE=Europe/Vilnius
-START_AT=09:00
-```
+| Variable    | Description                       |
+| ----------- | --------------------------------- |
+| ENV         | Environment name                  |
+| INTERVAL    | Default scheduler interval        |
+| START_AT    | Optional first run time (HH:MM)   |
+| TIMEZONE    | Timezone used for scheduling      |
+| DAILY_LIMIT | Approximate daily API request cap |
+| DB_PATH     | SQLite database path              |
 
 ---
 
-## OpenWeather
+### OpenWeather
 
-* `WEATHER_API_KEY` — required
-* `WEATHER_LAT`, `WEATHER_LON` — default coordinates
-* `WEATHER_HTTP_TIMEOUT` — request timeout
-* `DAILY_LIMIT` — approximate daily request cap
-
----
-
-## Telegram
-
-* `TG_TOKEN` — bot token
-* `TG_CHAT_ID` — used for default subscription only
-
-Telegram specifics:
-
-* Messages are HTML-escaped
-* Messages are automatically split if too long
-* Duplicate alerts are not re-sent
+| Variable             | Description       |
+| -------------------- | ----------------- |
+| WEATHER_API_KEY      | Required API key  |
+| WEATHER_LAT          | Default latitude  |
+| WEATHER_LON          | Default longitude |
+| WEATHER_HTTP_TIMEOUT | HTTP timeout      |
 
 ---
 
-# Subscriptions
+### Telegram
 
-Subscriptions are stored in SQLite table:
+| Variable   | Description                   |
+| ---------- | ----------------------------- |
+| TG_TOKEN   | Telegram bot token            |
+| TG_CHAT_ID | Used for default subscription |
 
-```sql
-subscriptions (
-  chat_id INTEGER PRIMARY KEY,
-  interval INTEGER,
-  start_at TEXT,
-  lat REAL,
-  lon REAL
-)
+---
+
+## Tests
+
+Run all tests:
+
+```bash
+make test
 ```
 
-Sent alerts dedup table:
+Tests cover:
 
-```sql
-sent_alerts (
-  chat_id INTEGER,
-  fingerprint TEXT,
-  sent_at INTEGER,
-  PRIMARY KEY(chat_id, fingerprint)
-)
-```
-
-Currently subscriptions must be:
-
-* seeded via environment (default subscription)
-* or manually inserted into SQLite
-
-Dynamic Telegram commands are not implemented yet.
+* Scheduler behavior
+* Alert fetching
+* Telegram sender logic
+* SQLite repository
+* Deduplication logic
 
 ---
 
-# How Scheduling Works
+## Graceful Shutdown
 
-Each subscription:
+On SIGINT or SIGTERM:
 
-1. Scheduler waits for optional `start_at`
-2. Runs job every `interval`
-3. Fetches alerts
-4. Filters already sent alerts (SQLite-based dedup)
-5. Sends only new alerts
-6. Marks them as sent
-
-Overlapping runs are prevented.
-
----
-
-# Graceful Shutdown
-
-On `SIGINT` / `SIGTERM`:
-
-* Stops accepting new runs
+* Stops accepting new jobs
 * Waits for active jobs
 * Closes SQLite connection
 
 ---
 
-# Troubleshooting
+## Environments
 
-### No Telegram messages
+Supported environments:
 
-* Check bot token
-* Make sure bot has permission in the chat
-* Verify `TG_CHAT_ID`
-
----
-
-### Alerts are never sent again
-
-Likely dedup is working correctly.
-Delete rows from `sent_alerts` table to reset state.
+* Local development
+* Docker container
+* Production (single instance)
 
 ---
 
-### START_AT behaves unexpectedly
+## Limitations
 
-Ensure correct timezone:
-
-```
-TIMEZONE=Europe/Moscow
-```
-
----
-
-# Current Limitations
-
-* No dynamic subscription management
-* No HTTP API
-* No metrics endpoint
-* No distributed scheduling (single instance design)
-
+* No distributed locking
+* No API layer
+* Manual subscription management only
+* No rate limit auto-detection from OpenWeather
 
