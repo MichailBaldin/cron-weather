@@ -5,7 +5,7 @@ import (
 	"context"
 	"time"
 
-	"cron-weather-2/internal/domain"
+	"cron-weather/internal/domain"
 )
 
 // Input is passed from scheduler runtime to a task.

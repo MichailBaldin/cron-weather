@@ -5,7 +5,7 @@ import (
 	"context"
 	"time"
 
-	"cron-weather-2/internal/domain"
+	"cron-weather/internal/domain"
 )
 
 // Repo defines persistence operations required by the application and scheduler runtime.

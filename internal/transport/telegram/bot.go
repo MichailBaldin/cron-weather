@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"strings"
 
-	"cron-weather-2/internal/config"
-	"cron-weather-2/internal/transport"
+	"cron-weather/internal/config"
+	"cron-weather/internal/transport"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )

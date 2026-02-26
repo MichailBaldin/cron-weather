@@ -10,10 +10,10 @@ import (
 	"sync"
 	"time"
 
-	"cron-weather-2/internal/domain"
-	"cron-weather-2/internal/storage"
-	"cron-weather-2/internal/task"
-	"cron-weather-2/internal/transport"
+	"cron-weather/internal/domain"
+	"cron-weather/internal/storage"
+	"cron-weather/internal/task"
+	"cron-weather/internal/transport"
 
 	"github.com/robfig/cron/v3"
 )
@@ -282,8 +282,8 @@ func (e *Engine) run(ctx context.Context, it domain.SchedulerWithTarget) {
 		attrs = append(attrs, slog.String("error", errText))
 	}
 	if status == "success" {
-		e.log.Info("schedule run finished", attrs...)
+		e.log.Info("schedule run finished")
 	} else {
-		e.log.Warn("schedule run finished", attrs...)
+		e.log.Warn("schedule run finished")
 	}
 }

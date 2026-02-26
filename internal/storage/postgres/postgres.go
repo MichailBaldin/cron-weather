@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"time"
 
-	"cron-weather-2/internal/domain"
-	"cron-weather-2/internal/storage"
+	"cron-weather/internal/domain"
+	"cron-weather/internal/storage"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"

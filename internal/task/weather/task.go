@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"cron-weather-2/internal/storage"
-	"cron-weather-2/internal/task"
+	"cron-weather/internal/storage"
+	"cron-weather/internal/task"
 )
 
 // Task calls OpenWeather One Call API and produces messages.
