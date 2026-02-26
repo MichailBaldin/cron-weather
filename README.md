@@ -1,240 +1,247 @@
 # cron-weather
 
-cron-weather is a lightweight Go service that periodically fetches weather alerts
-from the OpenWeather One Call API and delivers them to Telegram chats.
+`cron-weather` is a lightweight Go service that runs persistent cron schedules, fetches weather alerts from the OpenWeather **One Call 3.0** API, and delivers notifications to Telegram chats.
 
-It supports multiple chat subscriptions stored in SQLite and prevents duplicate
-alert delivery across restarts.
+Key properties:
 
----
-
-## Project Purpose
-
-The goal of this project is to provide a simple, reliable background service
-that monitors weather alerts and sends notifications to configured Telegram chats.
-
-It is designed as:
-
-- A small standalone service
-- Docker-friendly
-- Persistent between restarts
-- Safe against duplicate alert delivery
-- Easy to configure via environment variables
+- Telegram-managed schedules (create/list/stop)
+- PostgreSQL persistence (subscriptions, endpoints, schedules, runs)
+- Schedules survive restarts (active schedules are bootstrapped on startup)
+- Alert deduplication across restarts (fingerprint-based)
+- Hard daily API request cap per subscription (persisted counter)
 
 ---
 
-## Tech Stack
+## Tech stack
 
-- **Go** 1.25+
-- **SQLite** (via mattn/go-sqlite3)
-- **Telegram Bot API**
-- **OpenWeather One Call API 3.0**
-- **Docker / Docker Compose**
-
----
-
-## Project Status
-
-Current version: **v0.1.0**
-
-Status:  
-✔ Core functionality implemented  
-✔ Persistent subscriptions  
-✔ Persistent alert deduplication  
-✔ Graceful shutdown  
-✔ Basic test coverage  
-
-Not implemented yet:
-- Dynamic subscription management (via Telegram commands)
-- HTTP API
-- Metrics endpoint
-- Horizontal scaling
-
-This is currently a single-instance background service.
+- Go
+- PostgreSQL
+- Telegram Bot API
+- OpenWeather One Call API 3.0
+- `github.com/robfig/cron/v3`
+- Docker / Docker Compose
 
 ---
 
-## Architecture Overview
+## Architecture overview
 
-For each subscription:
+At a high level the service is split into two parts:
 
-1. A cron service runs on a defined interval.
-2. Weather alerts are fetched.
-3. Already-sent alerts are filtered (SQLite-based dedup).
-4. Only new alerts are sent.
-5. Sent alerts are recorded to prevent duplicates.
+- **Scheduler runtime** (`internal/scheduler`): owns *when* jobs run (robfig/cron), registers/bootstraps schedules, records runs.
+- **Task runners** (`internal/task/...`): own *what* happens on each run (weather fetch, formatting, dedup, etc).
 
-SQLite tables:
-
-### subscriptions
-
-| Field | Description |
-|--------|------------|
-| chat_id | Telegram chat ID |
-| interval | Run interval (nanoseconds) |
-| start_at | Optional start time (HH:MM) |
-| lat | Latitude |
-| lon | Longitude |
-
-### sent_alerts
-
-| Field | Description |
-|--------|------------|
-| chat_id | Telegram chat ID |
-| fingerprint | SHA256 of alert message |
-| sent_at | Unix timestamp |
+A schedule has a `kind` field (e.g. `weather`). The runtime engine routes each run to a matching task runner. Replacing the API or adding new types of work is done by adding a new runner and registering it by `kind`, without rewriting the scheduler.
 
 ---
 
-## How to Install
+## Database schema (PostgreSQL)
 
-### Option 1 — Docker (Recommended)
+Migrations are located in `internal/storage/postgres/migrations`.
 
-1. Clone the repository:
+Core tables:
 
-```bash
-git clone <repo_url>
-cd cron-weather
-````
+- `subscriptions` — one subscription per Telegram chat (`owner_ref` is chat ID as string), plus per-subscription coordinates (`lat`, `lon`).
+- `endpoints` — delivery targets (currently only `telegram`).
+- `subscription_endpoints` — links a subscription to its endpoint(s).
+- `schedules` — persisted cron schedules (`expr`, `kind`, `starts_at`, `ends_at`, `active`, `next_run_at`).
+- `runs` — execution history for observability/debugging.
 
-2. Create `.env` file:
+Weather-specific tables:
 
-- `ENV=local` → debug level, human-readable console logs.
-- `ENV=prod` → info level, structured JSON logs
+- `daily_usage` — persisted per-day request counter (guarantees the daily limit across restarts).
+- `sent_alerts` — per-subscription alert fingerprints to prevent duplicate deliveries.
 
+---
 
-```env
-ENV=prod
+## Telegram commands
 
-INTERVAL=30s
-START_AT=
-TIMEZONE=UTC
-DAILY_LIMIT=1000
+The bot controls subscriptions and schedules.
 
-WEATHER_API_KEY=your_openweather_api_key
-WEATHER_LAT=your_latitude
-WEATHER_LON=your_longitude
-WEATHER_HTTP_TIMEOUT=10s
+### Subscription
 
-TG_TOKEN=your_telegram_bot_token
-TG_CHAT_ID=your_chat_id
+Enable a subscription for the current chat:
 
-DB_PATH=/data/subscriptions.db
+```
+/start_scheduler
 ```
 
-3. Run:
+Disable the subscription (and stop all schedules for the chat):
 
-```bash
-docker compose up --build -d
+```
+/stop_scheduler
 ```
 
-4. View logs:
+Set coordinates for the subscription (required for weather task):
 
-```bash
-docker compose logs -f
+```
+/set_location <lat> <lon>
+```
+
+### Schedules
+
+Create a schedule:
+
+```
+/start <cron expr> <start_at> <end_at>
+```
+
+- `start_at` / `end_at` are RFC3339 timestamps or `-` (meaning “unset”).
+- If `start_at` is `-`, the schedule starts immediately.
+- If `end_at` is `-`, the schedule runs indefinitely.
+
+List active schedules for the chat:
+
+```
+/list_scheduler
+```
+
+Stop a schedule by ID:
+
+```
+/stop <schedule_id>
 ```
 
 ---
 
-### Option 2 — Local Run
+## Cron expressions
 
-Requirements:
+The runtime uses `cron.WithSeconds()`, so expressions support seconds (6 fields):
 
-* Go 1.25+
-
-Run:
-
-```bash
-make run
+```
+second minute hour day month weekday
 ```
 
-Run tests:
+Examples:
 
-```bash
-make test
+- Every 10 seconds:
+
 ```
+*/10 * * * * *
+```
+
+- Every 30 seconds:
+
+```
+*/30 * * * * *
+```
+
+To start immediately and run forever, use `- -` for the time window:
+
+```
+/start */10 * * * * * - -
+```
+
+---
+
+## Weather task behavior
+
+On each run, the `weather` task:
+
+1. Reserves one request from the daily limit (`daily_usage`).
+2. Calls OpenWeather One Call 3.0 API for the subscription coordinates.
+3. Extracts alerts and formats them for Telegram.
+4. Deduplicates each alert using a SHA256 fingerprint stored in `sent_alerts`.
+5. Checks `current.weather[].id` for urgent codes and, if present, appends the phrase:
+   - `позвони срочно родителям`
+   and logs the matched codes.
+
+### Retry policy
+
+- `400`, `401`, `404` — **no retry**
+- `429` — retry using `Retry-After` (if present), otherwise backoff
+- `5xx` — retry with backoff
 
 ---
 
 ## Configuration
 
-All configuration is environment-based.
+Configuration is loaded from environment variables.
 
-### Core
+Required:
 
-| Variable    | Description                       |
-| ----------- | --------------------------------- |
-| ENV         | Environment name                  |
-| INTERVAL    | Default scheduler interval        |
-| START_AT    | Optional first run time (HH:MM)   |
-| TIMEZONE    | Timezone used for scheduling      |
-| DAILY_LIMIT | Approximate daily API request cap |
-| DB_PATH     | SQLite database path              |
+- `TG_BOT_TOKEN` — Telegram bot token
+- `OWM_API_KEY` — OpenWeather API key
+- `PG_*` — PostgreSQL connection settings (see `.env` and `docker-compose.yml`)
 
----
+Optional:
 
-### OpenWeather
-
-| Variable             | Description       |
-| -------------------- | ----------------- |
-| WEATHER_API_KEY      | Required API key  |
-| WEATHER_LAT          | Default latitude  |
-| WEATHER_LON          | Default longitude |
-| WEATHER_HTTP_TIMEOUT | HTTP timeout      |
+- `OWM_DAILY_LIMIT` — daily request cap per subscription (default: `1000`)
 
 ---
 
-### Telegram
+## Running with Docker
 
-| Variable   | Description                   |
-| ---------- | ----------------------------- |
-| TG_TOKEN   | Telegram bot token            |
-| TG_CHAT_ID | Used for default subscription |
+Create/update `.env` (see the repo `example.env` for an example), then:
+Example .env
 
----
+```txt
+ENV=<local|prod>
 
-## Tests
+TG_BOT_TOKEN=<your telegram bot token>
 
-Run all tests:
+PG_HOST=postgres
+PG_PORT=5432
+PG_USER=<your postgres user>
+PG_PASSWORD=<your user postgres password>
+PG_DB=<your postgres database name>
+PG_SSLMODE=disable
 
-```bash
-make test
+OWM_API_KEY=<your api key for open weather api>
 ```
 
-Tests cover:
 
-* Scheduler behavior
-* Alert fetching
-* Telegram sender logic
-* SQLite repository
-* Deduplication logic
+```bash
+make up
+```
+
+Follow logs:
+
+```bash
+make logs
+```
+
+Restart only the app container:
+
+```bash
+make restart
+```
+
+Open a shell inside the app container:
+
+```bash
+make app-shell
+```
+
+Open a `psql` shell:
+
+```bash
+make db-shell
+```
+
+Full wipe (removes containers **and volumes**):
+
+```bash
+make db-reset
+```
 
 ---
 
-## Graceful Shutdown
+## Adding a new scheduled task kind
 
-On SIGINT or SIGTERM:
+1. Create a new package under `internal/task/<kind>` implementing `task.Runner`.
+2. Register the runner in application wiring (where runners map is built) under key `<kind>`.
+3. Create schedules with `kind=<kind>` (currently the bot creates `weather` schedules).
 
-* Stops accepting new jobs
-* Waits for active jobs
-* Closes SQLite connection
-
----
-
-## Environments
-
-Supported environments:
-
-* Local development
-* Docker container
-* Production (single instance)
+This keeps the separation explicit: the scheduler engine stays unchanged.
 
 ---
 
-## Limitations
+## Logging
 
-* No distributed locking
-* No API layer
-* Manual subscription management only
-* No rate limit auto-detection from OpenWeather
+In production, the service logs:
 
+- schedule creation / stop
+- runtime schedule registration (important for restarts)
+- every run start + finish (status and duration)
+
+Telegram debug output is opt-in via `TG_DEBUG=true` to avoid noisy JSON logs.
