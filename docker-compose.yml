@@ -1,25 +1,42 @@
 services:
-  cron-weather:
-    build: .
-    container_name: weather-cron
-    restart: unless-stopped
+  postgres:
+    image: postgres:16-alpine
+    container_name: cron-weather-postgres
     environment:
-      - ENV=${ENV:-prod}
-      - INTERVAL=${INTERVAL:-30s}
-      - START_AT=${START_AT}
-      - TIMEZONE=${TIMEZONE:-UTC}
-      - DAILY_LIMIT=${DAILY_LIMIT:-1000}
-      - WEATHER_API_KEY=${WEATHER_API_KEY}
-      - WEATHER_LAT=${WEATHER_LAT:-55.60732906526543}
-      - WEATHER_LON=${WEATHER_LON:-38.168394018791}
-      - WEATHER_HTTP_TIMEOUT=${WEATHER_HTTP_TIMEOUT:-10s}
-      - TG_TOKEN=${TG_TOKEN}
-      - TG_CHAT_ID=${TG_CHAT_ID}
-      - DB_PATH=/data/subscriptions.db
-      - DEFAULT_SUB_CHAT_ID=${DEFAULT_SUB_CHAT_ID}
-      - DEFAULT_SUB_INTERVAL=${DEFAULT_SUB_INTERVAL}
-      - DEFAULT_SUB_START_AT=${DEFAULT_SUB_START_AT}
-      - DEFAULT_SUB_LAT=${DEFAULT_SUB_LAT}
-      - DEFAULT_SUB_LON=${DEFAULT_SUB_LON}
+      POSTGRES_USER: ${PG_USER:-app}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-app}
+      POSTGRES_DB: ${PG_DB:-app}
+    ports:
+      - "5432:5432"
     volumes:
-      - ./data:/data
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${PG_USER:-app} -d ${PG_DB:-app}" ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cron-weather-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      IN_DOCKER: "1"
+      ENV: ${ENV:-local}
+      TG_BOT_TOKEN: ${TG_BOT_TOKEN}
+      PG_HOST: ${PG_HOST:-postgres}
+      PG_PORT: ${PG_PORT:-5432}
+      PG_USER: ${PG_USER:-app}
+      PG_PASSWORD: ${PG_PASSWORD:-app}
+      PG_DB: ${PG_DB:-app}
+      PG_SSLMODE: ${PG_SSLMODE:-disable}
+    restart: unless-stopped
+    env_file:
+      - .env
+
+volumes:
+  pgdata:
