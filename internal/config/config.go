@@ -1,52 +1,77 @@
+// Package config loads and validates application configuration from environment variables.
 package config
 
 import (
 	"log"
-	"time"
+	"net/url"
+	"os"
+	"strconv"
 
-	"github.com/ilyakaznacheev/cleanenv"
+	"github.com/caarlos0/env/v11"
+	"github.com/joho/godotenv"
 )
 
+// Config contains application configuration loaded from environment variables.
 type Config struct {
-	Env        string              `env:"ENV"`
-	Interval   time.Duration       `env:"INTERVAL" default:"30s"`
-	StartAt    string              `env:"START_AT"`
+	Env string `env:"ENV" envDefault:"prod"`
 
-	Timezone string `env:"TIMEZONE" default:"UTC"`
-	DailyLimit int `env:"DAILY_LIMIT" default:"1000"`
-	
-	WeatherAPI Client              `env-prefix:"WEATHER_"`
-	SenderAPI  Telegram            `env-prefix:"TG_"`
-	DBPath     string              `env:"DB_PATH" default:"weather.db"`
-	DefaultSub DefaultSubscription `env-prefix:"DEFAULT_SUB_"`
+	TgBot       TgBotConfig       `envPrefix:"TG_"`
+	Postgres    PostgressConfig   `envPrefix:"PG_"`
+	OpenWeather OpenWeatherConfig `envPrefix:"OWM_"`
 }
 
-type Client struct {
-	APIKey      string        `env:"API_KEY" required:"true"`
-	Lat         float64       `env:"LAT"`
-	Lon         float64       `env:"LON"`
-	HTTPTimeout time.Duration `env:"HTTP_TIMEOUT" default:"10s"`
+// TgBotConfig contains Telegram Bot API configuration.
+type TgBotConfig struct {
+	BotToken string `env:"BOT_TOKEN,required"`
+	Debug    bool   `env:"DEBUG" envDefault:"false"`
 }
 
-type Telegram struct {
-	Token  string `env:"TOKEN"`
-	ChatID int64  `env:"CHAT_ID"`
+// PostgressConfig contains PostgreSQL connection settings.
+type PostgressConfig struct {
+	Host     string `env:"HOST" envDefault:"postgres"`
+	Port     int    `env:"PORT" envDefault:"5432"`
+	User     string `env:"USER" envDefault:"app"`
+	Password string `env:"PASSWORD" envDefault:"app"`
+	DBName   string `env:"DB" envDefault:"app"`
+	SSLMode  string `env:"SSLMODE" envDefault:"disable"`
 }
 
-type DefaultSubscription struct {
-	ChatID   int64         `env:"CHAT_ID"`
-	Interval time.Duration `env:"INTERVAL"`
-	StartAt  string        `env:"START_AT"`
-	Lat      float64       `env:"LAT"`
-	Lon      float64       `env:"LON"`
+// DSN returns a PostgreSQL DSN built from the config fields.
+func (p PostgressConfig) DSN() string {
+	u := &url.URL{Scheme: "postgres"}
+	if p.User != "" {
+		u.User = url.UserPassword(p.User, p.Password)
+	}
+	u.Host = p.Host + ":" + strconv.Itoa(p.Port)
+	u.Path = "/" + p.DBName
+	q := u.Query()
+	q.Set("sslmode", p.SSLMode)
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
+// OpenWeatherConfig contains OpenWeather API configuration.
+type OpenWeatherConfig struct {
+	APIKey     string `env:"API_KEY,required"`
+	DailyLimit int    `env:"DAILY_LIMIT" envDefault:"1000"`
+}
+
+// MustLoad loads configuration from .env (outside Docker) and the process environment.
+// It terminates the process on error.
 func MustLoad() *Config {
+	if os.Getenv("IN_DOCKER") == "" {
+		if err := godotenv.Load(); err != nil {
+			log.Fatalf("failed to load env file: %v", err)
+		}
+	}
+
 	var cfg Config
 
-	if err := cleanenv.ReadEnv(&cfg); err != nil {
-		log.Fatalf("read env config: %v", err)
+	if err := env.Parse(&cfg); err != nil {
+		log.Fatalf("failed to read env file: %v", err)
 	}
 
 	return &cfg
 }
+
+
