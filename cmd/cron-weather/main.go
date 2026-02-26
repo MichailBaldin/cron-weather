@@ -7,11 +7,11 @@ import (
 	"os/signal"
 	"syscall"
 
-	"cron-weather-2/internal/app"
-	"cron-weather-2/internal/config"
-	"cron-weather-2/internal/storage/postgres"
-	"cron-weather-2/internal/transport/telegram"
-	"cron-weather-2/pkg/logger"
+	"cron-weather/internal/app"
+	"cron-weather/internal/config"
+	"cron-weather/internal/storage/postgres"
+	"cron-weather/internal/transport/telegram"
+	"cron-weather/pkg/logger"
 )
 
 func main() {
