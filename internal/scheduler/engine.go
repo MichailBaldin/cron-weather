@@ -61,7 +61,10 @@ func New(log *slog.Logger, repo storage.Repo, producer transport.Producer, runne
 		cron.WithSeconds(),
 		cron.WithParser(parser),
 		cron.WithLocation(loc),
-		cron.WithChain(cron.Recover(cron.DefaultLogger)),
+		cron.WithChain(
+			cron.SkipIfStillRunning(cron.DefaultLogger),
+			cron.Recover(cron.DefaultLogger),
+		),
 	)
 
 	if runners == nil {
