@@ -42,12 +42,17 @@ type Engine struct {
 }
 
 // New creates a scheduler Engine with the given repository, producer and task runners.
-func New(log *slog.Logger, repo storage.Repo, producer transport.Producer, runners map[string]task.Runner) *Engine {
+func New(log *slog.Logger, repo storage.Repo, producer transport.Producer, runners map[string]task.Runner, tz string) *Engine {
 	parser := cron.NewParser(
 		cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
 	)
 
-	loc, err := time.LoadLocation("Europe/Vilnius")
+	tz = strings.TrimSpace(tz)
+	if tz == "" {
+		tz = "UTC"
+	}
+
+	loc, err := time.LoadLocation(strings.TrimSpace(tz))
 	if err != nil || loc == nil {
 		loc = time.UTC
 	}

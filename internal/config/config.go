@@ -13,7 +13,8 @@ import (
 
 // Config contains application configuration loaded from environment variables.
 type Config struct {
-	Env string `env:"ENV" envDefault:"prod"`
+	Env      string `env:"ENV" envDefault:"prod"`
+	Timezone string `env:"TZ" envDefault:"UTC"`
 
 	TgBot       TgBotConfig       `envPrefix:"TG_"`
 	Postgres    PostgressConfig   `envPrefix:"PG_"`
@@ -73,5 +74,3 @@ func MustLoad() *Config {
 
 	return &cfg
 }
-
-

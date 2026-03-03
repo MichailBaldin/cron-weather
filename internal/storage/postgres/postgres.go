@@ -156,7 +156,7 @@ func (r *PostgresRepo) DeactivateSubscription(ctx context.Context, chatID int64)
 }
 
 // CreateScheduler creates a new schedule for the given chat.
-func (r *PostgresRepo) CreateScheduler(ctx context.Context, chatID int64, cronExpr string, startAt, endAt *time.Time) (string, error) {
+func (r *PostgresRepo) CreateScheduler(ctx context.Context, chatID int64, cronExpr string, tz string, startAt, endAt *time.Time) (string, error) {
 	ownerRef := fmt.Sprintf("telegram:chat:%d", chatID)
 
 	// require subscription to exist (and be active)
@@ -172,9 +172,9 @@ func (r *PostgresRepo) CreateScheduler(ctx context.Context, chatID int64, cronEx
 	var scheduleID string
 	err = r.pool.QueryRow(ctx, `
 		INSERT INTO schedules(subscription_id, kind, expr, tz, starts_at, ends_at, active)
-		VALUES($1, 'cron', $2, 'Europe/Vilnius', $3, $4, true)
+		VALUES($1, 'cron', $2, $3, $4, $5, true)
 		RETURNING id
-	`, subID, cronExpr, startAt, endAt).Scan(&scheduleID)
+	`, subID, cronExpr, tz, startAt, endAt).Scan(&scheduleID)
 	if err != nil {
 		return "", fmt.Errorf("insert schedule: %w", err)
 	}

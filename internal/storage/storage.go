@@ -13,7 +13,7 @@ type Repo interface {
 	ActiveSubscription(ctx context.Context, chatID int64) (string, error)
 	DeactivateSubscription(ctx context.Context, chatID int64) error
 
-	CreateScheduler(ctx context.Context, chatID int64, cronExpr string, startAt, endAt *time.Time) (string, error)
+	CreateScheduler(ctx context.Context, chatID int64, cronExpr string, tz string, startAt, endAt *time.Time) (string, error)
 	StopScheduler(ctx context.Context, chatID int64, schedulerID string) error
 	ListActiveSchedulers(ctx context.Context, chatID int64) ([]domain.Scheduler, error)
 

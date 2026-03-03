@@ -21,6 +21,8 @@ import (
 type App struct {
 	logger *slog.Logger
 
+	timezone string
+
 	subs storage.Repo
 
 	consumer transport.Consumer
@@ -31,15 +33,21 @@ type App struct {
 
 // New constructs the application with storage, transports and runtime scheduler.
 func New(logger *slog.Logger, subs storage.Repo, consumer transport.Consumer, producer transport.Producer, cfg *config.Config) *App {
+	tz := strings.TrimSpace(cfg.Timezone)
+	if tz == "" {
+		tz = "UTC"
+	}
+
 	client := weather.NewOpenWeatherClient(cfg.OpenWeather.APIKey)
 	wt := weather.NewTask(logger, subs, client, cfg.OpenWeather.DailyLimit)
 	runners := map[string]task.Runner{
 		"weather": wt,
 		"cron":    wt,
 	}
-	sched := scheduler.New(logger, subs, producer, runners)
+	sched := scheduler.New(logger, subs, producer, runners, tz)
 	return &App{
 		logger:   logger,
+		timezone: tz,
 		subs:     subs,
 		consumer: consumer,
 		producer: producer,
@@ -196,7 +204,7 @@ func (a *App) cmdStartCron(ctx context.Context, chatID int64, argsRaw string) {
 		return
 	}
 
-	id, err := a.subs.CreateScheduler(ctx, chatID, cronExpr, startAt, endAt)
+	id, err := a.subs.CreateScheduler(ctx, chatID, cronExpr, a.timezone, startAt, endAt)
 	if err != nil {
 		a.logger.Error("failed to create scheduler", slog.Any("err", err), slog.Int64("chat_id", chatID))
 		_ = a.producer.Send(ctx, transport.Message{

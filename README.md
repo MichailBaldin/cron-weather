@@ -187,6 +187,9 @@ PG_DB=<your postgres database name>
 PG_SSLMODE=disable
 
 OWM_API_KEY=<your api key for open weather api>
+
+#IANA Time Zone Database
+TZ=Europe/Vilnius
 ```
 
 
